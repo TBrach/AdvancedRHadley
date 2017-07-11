@@ -1,0 +1,332 @@
+---
+title: "05_Functions"
+author: "Thorsten Brach"
+date: "6/2/2017"
+output: html_document
+---
+
+- helps for the exercises: https://github.com/peterhurford/adv-r-book-solutions
+
+- **The most important thing to understand about R** is that functions are objects in their own right
+
+
+# Function Components
+
+- The three main components of a function are:
+    - body()
+    - formals() (list of arguments)
+    - environment()
+- printing a function shows you these three components, the environment is left out if the function was created in the global environment
+- like all R objects, functions in R can have additional attributes (attributes())
+- The **srcref** attribute in base R might show you code with comments unlike body() 
+
+
+```{r}
+body(mean)
+formals(mean)
+environment(mean)
+attributes(mean)
+```
+
+## Primitive functions
+
+- they are the exception in not having 3 components (formals, body, and environment are NULL), they are implemented in C
+- They call C code directly with .Primitive()
+- primitive functions are only found in the base package, they can be more efficient (e.g. no copying on modulation), but since they behave differently from other functions the R team avoids them
+
+```{r}
+body(sum) #NULL
+```
+
+## Exercises
+
+```{r}
+# 1.) What functions tell you whether an object is a function or even a primitive function
+is.function(mean)
+is.primitive(sum)
+is.primitive(mean)
+
+# 2.)
+
+### This code makes a list of all functions in the base package.
+### 
+    objs <- mget(ls("package:base"), inherits = TRUE)
+    funs <- Filter(is.function, objs)
+### Use it to answer the following questions:
+### 
+### 1. Which base function has the most arguments?
+### 
+### 2. How many base functions have no arguments? What's special about those
+###    functions.
+###    
+### 3. How could you adapt the code to find all primitive functions?
+
+# -- 1. Which base function has the most arguments? --
+    length(funs) # 1206 functions
+# We can use the following to find that the "scan" function has the most arguments:
+  which.max(lapply(funs, function(x) length(formals(x))))
+# scan
+#  908
+# The scan function has 22 arguments:
+  length(formals(scan))
+# [1] 22
+# ----
+
+  
+# -- 2 How many have no arguments and what is special about them --
+
+funs_0arguments <- funs[sapply(funs, function(x) length(formals(x))==0)]
+length(funs_0arguments) #225 have no arguments
+# since primitive functions have formals(x) = 0 I assume many of the functions are primitive
+sum(sapply(funs_0arguments, is.primitive)) # indeed 183 are primitive
+# what with the others
+funs_0arguments_notprimitives <- funs_0arguments[!(sapply(funs_0arguments, is.primitive))]
+sapply(funs_0arguments_notprimitives, is.function) # of course all true
+# so honestly could not figure out what is so special other than that they maybe are in C??
+
+# 3. adapt the code to only find primitives 
+  primitive.funs <- Filter(is.primitive, objs)
+# There are 181 of them
+
+```
+
+# Lexical scoping
+
+- Scoping are the rules R uses to look up the value of a symbol
+- R has two types of scoping:
+    - lexical scoping (referring to the computer science term lexing: the process of turning text to pieces that the programming language understands)
+    - dynamic scoping (used to save typing during interactive analysis)
+- lexical scoping:
+    - **looks up symbol values based on how functions were nested when they were created (not when they are called)**. Advantage: the call makes no difference, you can see the look up by looking at the function's definition
+    
+    
+There are four principles behind R's implementation of lexical scoping. 
+
+## 1.) Name Masking
+
+- if a name is not defined within a function, R will look one level up
+- not sure why this principle is called name masking but see the last example
+
+```{r}
+
+x <- 2
+g <- function() {
+y <- 1
+c(x, y)
+}
+g()
+rm(x, g)
+
+# example of a closure
+
+j <- function(x) {
+        y <- 2
+        function() {
+                c(x, y)
+        }
+}
+k <- j(23)
+k() # the y is saved in the environment of k (environment(k))
+y = 4
+k() # Maybe this is why it is named Name masking, the k still refers to the y in his environment.
+rm(j, k)
+```
+
+- btw: closures are functions created by other functions
+
+## 2.) Functions vs. variables
+
+- remember scoping is finding the value of a symbol, the same principles apply regardless of the type of the value to find, i.e. finding functions works just as finding variables
+- there is one tweak though, if it is obvious that what you want is a function, R will ignore non-function objects while searching. 
+    - see the following example where n is different for the function and the variable (so R scopes for n but knows in the first case it i looking for a function!)
+    
+```{r}
+
+n <- function(x) x / 2
+o <- function() {
+n <- 10
+n(n)
+}
+o()
+
+```
+
+## 3.) A fresh start
+
+- every time a function is called, a new environment is created to execute the function. 
+   - **Thus a function will not remember values generated in previous runs of the function**
+
+```{r}
+
+j <- function() {
+        if (!exists("a")) {
+                a <- 1
+        } else {
+                a <- a + 1
+        }
+        print(a)
+}
+j()
+j()
+```   
+
+## 4.) Dynamic lookup
+
+- lexical scoping determines where to look for a value of a symbol (namely defined by the environments during creation)
+- But it is not defined when to look for them, that happens during run of the functions. So the output of a function can depend on objects in environments outside of it (clear). 
+
+- ** For me all these principles are just: scope in the environment of creation, then one up and up and up to the global environment** And you can scope after values that can be functions.
+- NB: it is risky when a function depends on values that are in another environment (like the global environment), the function is then not **self-contained**. findGlobals() helps you to find external dependencies of a function.
+- but note it is impossible to make a function completely self-contained because R lexical scopes everything, even operators such as +, so you always rely on base R functions
+
+```{r}
+
+f <- function() x + 1
+codetools::findGlobals(f)
+
+```   
+
+
+### Exercises
+
+```{r}
+# 1.) What does the following code return? Why? What does each of the three c's mean?
+
+c <- 10
+c(c = c) # returns 10 named c. Remember R knows when to look for a function and when for a variable. 
+
+# 2.) For the four principles see headers above
+# 3.) What does the following function return, make a prediction first
+
+f <- function(x) {
+        f <- function(x) {
+                f <- function(x) {
+                        x ^ 2
+                }
+                f(x) + 1
+        }
+        f(x) * 2
+}
+f(10)
+# I predict 202
+
+```  
+
+# Every operation is a function call
+
+- everything in R is an object, everything that happens is a function call
+- this includes **infix** operators such as +
+- this includes **control flow** operators such as for
+- this includes **subsetting** operators such as {}
+
+```{r}
+sapply(1:10, `+`, 3) # uses the value of the object +, which is the function +
+sapply(1:10, "+", 3) # match.fun() is used in sapply to find the function named +.
+
+```
+
+# Function arguments
+
+- a function has formal arguments (property of the function) and actual or calling arguments (can vary for each call)
+- here you learn how calling arguments are mapped to formal arguments
+
+## Calling functions
+
+- Arguments can be specified by name, partial name, and postion in a function call. 
+- you can call a function with a argument list using **do.call**
+
+```{r}
+do.call(mean, list(1:10, na.rm = TRUE))
+```
+
+## Default and missing arguments
+
+- Because arguments in R are evaluated lazily, you can define default values based on other arguments or even variables in the function body (bad practice)
+-the missing function tells you if an argument was supplied (Hadley instead uses default = NULL and then is.null to check if it was provided)
+```{r}
+g <- function(a = 1, b = a * 2) {
+c(a, b)
+}
+i <- function(a, b) {
+c(missing(a), missing(b))
+}
+i()
+```
+
+## Lazy evaluation
+
+- Arguments are only evaluated when they are used
+- force() can be used to make arguments be evaluated in any case
+- closures are functions created by functions
+
+```{r}
+add <- function(x) {
+        # he recommends a force(x), or just x here
+function(y) x + y
+}
+adders <- lapply(1:10, add)
+adders[[1]](10)
+#> [1] 11
+adders[[10]](10)
+#> [1] 20
+```
+
+- remember default values are evaluated inside the function
+- an unevaluated argument is called a **promise**
+
+```{r}
+f <- function(x = ls()) {
+a <- 1
+x
+}
+f()
+f(ls()) # global environment
+```
+
+- remember if statements are functions, here laziness is handy
+
+```{r}
+if (is.null(a)) stop("a is null") # is equal to
+!is.null(a) || stop("a is null") # thanks to lazy evaluation
+
+```
+
+## The ... argument
+
+- matches all arguments not otherwise matched
+- useful for example to collect arguments to call another function
+- ... is often used with S3 generic functions to allow individual methods to be more flexible
+- advantage: makes function flexible (like plot) but more complicated to understand.  
+- use list to capture ... in an easier to work with form
+
+```{r}
+f <- function(...) {
+list(...)
+# or names(list(...))
+}
+f(a = 1, b = 2)
+```
+- ... invites for unnoticed typos
+
+### Exercises
+
+```{r}
+# 1. Clarify the following list of odd function calls (not done)
+
+# 2. What does this function return? Why? Whcih principle does it illustrate
+
+f1 <- function(x = {y <- 1; 2}, y = 0) {
+x + y
+}
+f1()
+# it returns 3. y is default to 0, but then x is lazily evaluated within the function which assigns a new value to y. 
+# so I would say it illustrates lazy evaluation
+
+# 3. What does this function return? Why? Whcih principle does it illustrate
+f2 <- function(x = z) {
+z <- 100
+x
+}
+f2()
+# returns 100, again illustrating lazy evaluation
+```
