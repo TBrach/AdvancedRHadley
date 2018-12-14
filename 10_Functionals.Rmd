@@ -1,0 +1,268 @@
+---
+title: "10_Functionals"
+author: "Thorsten Brach"
+date: "2/3/2017"
+output: html_document
+---
+
+- for exercises check: <https://github.com/peterhurford/adv-r-book-solutions>
+
+# Functionals
+
+- higher order functions are functions that use functions as input or output
+- functionals are or can be replacements for for loops
+- if you duplicate looping patterns think about writing your own functional
+
+# For loop functionals: friends of lapply()
+
+## Vector output: sapply and vapply
+
+- sapply is good for interactive use, but you should use vapply in functions, since sapply guesses, vapply is safer (see FUN.VALUE argument)
+    
+```{r}
+sapply(mtcars, is.numeric)
+vapply(mtcars, is.numeric, FUN.VALUE = logical(1))
+sapply(list(), is.numeric)
+vapply(list(), is.numeric, logical(1)) # gives you the more logical logical
+df2 <- data.frame(x = 1:10, y = Sys.time() + 1:10)
+sapply(df2, class)
+vapply(df2, class, character(1))
+```
+
+- So vapply generates an error as soon as you do not get the expected output, while sapply gives you a list. Therefore use vapply in functions!
+
+## Multiple inputs: Map (and mapply)
+
+- in lapply only one argument to the function varies, the others are fixed.
+- what if you want a weighted mean, with a list of the values and a list of the weights?
+
+- ** MAP allows you to do lapply iterating over indices**
+- ** Map is useful whenever you have two or more lists or data frames that you need to process in parallel.**
+
+```{r}
+# Generate some sample data
+xs <- replicate(5, runif(10), simplify = FALSE)
+ws <- replicate(5, rpois(10, 5) + 1, simplify = FALSE)
+
+# you could use lapply iterating over indices
+unlist(lapply(seq_along(xs), function(i) {
+weighted.mean(xs[[i]], ws[[i]])
+}))
+
+
+# instead you can use Map
+unlist(Map(weighted.mean, xs, ws))
+
+# another example
+mtmeans <- lapply(mtcars, mean)
+mtcars[] <- Map(`/`, mtcars, mtmeans) # reminds me a bit of sweep on a matrix (see below)
+# In this case, equivalent to
+mtcars[] <- lapply(mtcars, function(x) x / mean(x))
+
+# if some of the arguments should be fixed and constant use an anonymous function
+Map(function(x, w) weighted.mean(x, w, na.rm = TRUE), xs, ws)
+# so here you fixed na.rm
+```
+
+- mapply is an alternative to Map, but Hadley prefers Map because:
+    - it's equal to mapply with simplify = FALSE, which is usually what you want
+    - mapply has the MoreArgs argument for adding constant inputs instead of using an anonymous function. This breaks R's usual lazy evaluation semantics.
+    - ** in Short: mapply() adds complication for little gain, use Map!**
+    
+
+
+
+## Rolling computations
+
+- basically writing your own loop replacements that do not already exist in base R
+- here an example for smoothing your data using a rolling mean function
+
+
+```{r}
+rollmean <- function(x, n) {
+out <- rep(NA, length(x))
+offset <- trunc(n / 2)
+for (i in (offset + 1):(length(x) - n + offset + 1)) {
+out[i] <- mean(x[(i - offset):(i + offset - 1)])
+}
+out
+}
+x <- seq(1, 3, length = 1e2) + runif(1e2)
+plot(x)
+lines(rollmean(x, 5), col = "blue", lwd = 2)
+lines(rollmean(x, 10), col = "red", lwd = 2)
+
+# but mean might be too sensitive to outliers
+x <- seq(1, 3, length = 1e2) + rt(1e2, df = 2) / 3
+plot(x)
+lines(rollmean(x, 5), col = "red", lwd = 2)
+```
+
+- so we could write the same function with median instead of mean, but instead of copying and pasting for a new funciotion, we could make the idea of computing a rolling summary into its own function
+
+```{r}
+rollapply <- function(x, n, f, ...) {
+out <- rep(NA, length(x))
+offset <- trunc(n / 2)
+for (i in (offset + 1):(length(x) - n + offset + 1)) {
+out[i] <- f(x[(i - offset):(i + offset - 1)], ...)
+}
+out
+}
+plot(x)
+lines(rollapply(x, 5, median), col = "red", lwd = 2)
+```
+
+- you can notice that the inner loop is like vapply, so we could simplify further
+
+```{r}
+rollapply <- function(x, n, f, ...) {
+offset <- trunc(n / 2)
+locs <- (offset + 1):(length(x) - n + offset + 1)
+num <- vapply(
+locs,
+function(i) f(x[(i - offset):(i + offset)], ...),
+numeric(1)
+)
+c(rep(NA, offset), num)
+}
+plot(x)
+lines(rollapply(x, 5, median), col = "red", lwd = 2)
+```
+
+- this is pretty much implemented in zoo::rollapply()
+- So I think you basically learned here how to make functions more general
+
+
+## Parallelisation
+
+- a cool thing of lapply() that that each iteration is computationally isolated, so the order of computing does not matter for the result:
+- see the lapply3 illustration, you define the vector before so the order of i does not matter!
+
+```{r}
+lapply3 <- function(x, f, ...) {
+out <- vector("list", length(x))
+for (i in sample(seq_along(x))) {
+out[[i]] <- f(x[[i]], ...)
+}
+out
+}
+```
+
+- That's why you can dispatch the task of computing an element to different cores, and compute them in parallel. 
+- This is what **parallel::mclapply() and parallel::mcMap()) does**
+
+```{r}
+library(parallel)
+unlist(mclapply(1:10, sqrt, mc.cores = 4))
+```
+
+- in this case, mclapply() is actually slower than lapply() because the individual computations costs are lower than sending the computation to different cores and collect the results. 
+- However the advantage becomes clear in more realistic examples
+
+
+```{r}
+boot_df <- function(x) x[sample(nrow(x), rep = T), ]
+rsquared <- function(mod) summary(mod)$r.square
+boot_lm <- function(i) {
+rsquared(lm(mpg ~ wt + disp, data = boot_df(mtcars)))
+}
+system.time(lapply(1:500, boot_lm))
+system.time(mclapply(1:500, boot_lm, mc.cores = 2))
+```
+
+- ** while increasing the number of cores will not always lead to linear imporovement, swithching to the parallelised forms of lapply and Map can dramatically improve performance **
+
+
+#### Exercises
+
+```{r}
+# 1.) use vapply() to compute the standard deviation of every column in a numeric data frame
+df <- mtcars
+vapply(df, class, character(1)) # all numeric
+vapply(df, sd, FUN.VALUE = numeric(1), na.rm = TRUE)
+
+# 1b.) use vapply() to compute the standard deviation of every numeric column in a mixed data frame (hint: use vapply twice)
+df$horst <- "horst"
+vapply(df, class, character(1)) # not all numeric any more
+vapply(df, sd, FUN.VALUE = numeric(1), na.rm = TRUE) # throws actually just a warning
+# so one way I see to only get the numeric columns
+df_num <- df[vapply(df, is.numeric, logical(1))] 
+vapply(df_num, sd, FUN.VALUE = numeric(1), na.rm = TRUE)
+
+
+```
+
+
+# Manipulating matrices and data frames
+
+- Use functionals to eliminate loops in common data manipulation tasks. 
+
+## Matrix and array operations (apply, sweep, outer)
+
+so here are functionals that allow more dimensional input structurees.
+- apply is a multidimensional variant of sapply
+- apply is not idempotent, meaning it does this transformation thingy
+
+
+```{r}
+a <- matrix(1:20, nrow = 5)
+a1 <- apply(a, 1, identity)
+identical(a, a1)
+identical(a, t(a1))
+a2 <- apply(a, 2, identity)
+identical(a, a2)
+```
+
+- plyr::aaply() is idempotent
+
+
+- sweep() allows you to sweep out the values of a summary statistic. It is often combined with apply
+
+```{r}
+x <- matrix(rnorm(20, 0, 10), nrow = 4)
+x1 <- sweep(x, 1, apply(x, 1, min), `-`) # subtract minimum from each row
+x2 <- sweep(x1, 1, apply(x1, 1, max), `/`) # divide by max of each row
+```
+
+
+- outer() is also a matrix functional. But it creates a matrix running all combinations of input vectors. 
+
+```{r}
+outer(1:3, 1:10, "*")
+```
+
+
+## Group apply
+
+- tapply is a generalisation to apply() that allows for "ragged" arrays, i.e. where each row can have a different number of columns. THis is often needed when you want to summarise a data set.
+- ** please remember also the split function here!**
+
+```{r}
+pulse <- round(rnorm(22, 70, 10 / 3)) + rep(c(0, 5), c(10, 12))
+group <- rep(c("A", "B"), c(10, 12))
+tapply(pulse, group, length)
+# funny this result you can get with table(group) as well
+# but not
+tapply(pulse, group, mean)
+# the first step of tapply is actually split
+split(pulse, group)
+# then tapply() just combines split() and sapply()
+
+tapply2 <- function(x, group, f, ..., simplify = TRUE) {
+pieces <- split(x, group)
+sapply(pieces, f, simplify = simplify)
+}
+tapply2(pulse, group, length)
+
+```
+
+## The plyr package
+
+- there some inconsistencies in the base functionals, like arguments not having the same names, or vapply versions do not exist for tapply, apply(), or Map
+- most importantly not all combinations of input and output types are covered, which was the key motivation for the plyr package, see the table: list to list is llply(), list to data.frame is ldply(), data.frame to arra is daply() and so on. 
+- all these plyr functions splits up the input, applies a function to each piece and then combines the result, so split-apply-combine. 
+   - * read "The Split-Apply-Combine Strategy for Data Analysis"
+  
+   
+# Manipulating lists

@@ -77,7 +77,7 @@ is.primitive(mean)
 
 funs_0arguments <- funs[sapply(funs, function(x) length(formals(x))==0)]
 length(funs_0arguments) #225 have no arguments
-# since primitive functions have formals(x) = 0 I assume many of the functions are primitive
+# since primitive functions have length(formals(x)) = 0 I assume many of the functions are primitive
 sum(sapply(funs_0arguments, is.primitive)) # indeed 183 are primitive
 # what with the others
 funs_0arguments_notprimitives <- funs_0arguments[!(sapply(funs_0arguments, is.primitive))]
@@ -86,8 +86,9 @@ sapply(funs_0arguments_notprimitives, is.function) # of course all true
 
 # 3. adapt the code to only find primitives 
   primitive.funs <- Filter(is.primitive, objs)
-# There are 181 of them
+# There are 183 of them
 
+# 4: when it was created in the global environment
 ```
 
 # Lexical scoping
@@ -108,6 +109,7 @@ There are four principles behind R's implementation of lexical scoping.
 - not sure why this principle is called name masking but see the last example
 
 ```{r}
+
 
 x <- 2
 g <- function() {
@@ -136,6 +138,7 @@ rm(j, k)
 
 ## 2.) Functions vs. variables
 
+- remember here: functions are objects in R, just like data.frames and so on
 - remember scoping is finding the value of a symbol, the same principles apply regardless of the type of the value to find, i.e. finding functions works just as finding variables
 - there is one tweak though, if it is obvious that what you want is a function, R will ignore non-function objects while searching. 
     - see the following example where n is different for the function and the variable (so R scopes for n but knows in the first case it i looking for a function!)
@@ -172,7 +175,7 @@ j()
 
 ## 4.) Dynamic lookup
 
-- lexical scoping determines where to look for a value of a symbol (namely defined by the environments during creation)
+- lexical scoping determines where to look for a value of a symbol (mainly defined by the environments during creation)
 - But it is not defined when to look for them, that happens during run of the functions. So the output of a function can depend on objects in environments outside of it (clear). 
 
 - ** For me all these principles are just: scope in the environment of creation, then one up and up and up to the global environment** And you can scope after values that can be functions.
@@ -208,7 +211,10 @@ f <- function(x) {
         f(x) * 2
 }
 f(10)
-# I predict 202
+# I predict 202 Why?
+# check f
+# when running outer f, you define a new function f, and you call it with x, this again 
+# defines a new f and calls it, so the output of the second f is x^2 + 1, this output gets multiplied by 2.
 
 ```  
 
@@ -329,4 +335,154 @@ x
 }
 f2()
 # returns 100, again illustrating lazy evaluation
+```
+
+# Special calls
+
+## Infix functions
+
+- all user-created infix functions must start and end with %, you need backtick for definition
+- they are always evaluated from left to right
+
+## Replacement functions
+
+- NB: there are primitiv replacement functions, implemented in C, that really replace in memory place (pryr::address)
+- the ones you can create yourself only pretend to replace and I do not fully see their point yet.
+
+
+### Exercises
+
+```{r}
+# 1. Create a list of all the replacement functions found in the base package. Which ones are primitive functions?
+
+objs <- mget(ls("package:base"), inherits = TRUE)
+names(objs)[grep(pattern = "<-$", names(objs))] 
+objs_replacement <- objs[grep(pattern = "<-$", names(objs))]
+objs_replacement_primitive <- Filter(is.primitive, objs_replacement)
+names(objs_replacement_primitive)
+
+# 2. What are valid names for user-created infix functions?
+
+# names must start and end with %
+
+# 3. Create an infix xor() operator.
+
+`%xor%` <- function(a, b) {
+        if (a && !b) return(TRUE)
+        if (!a && b) return(TRUE)
+        FALSE
+}
+
+TRUE %xor% FALSE # TRUE
+
+# 4. Create infix versions of the set functions intersect(), union(), and setdiff().
+
+# not done yet
+
+# 5. Create a replacement function that modifies a random location in a vector
+
+# not done yet
+```
+
+# Return Values
+
+- The last expression evaluated in a function becomes the return value, the result of invoking the function.
+- it is good style to use return() only when you are returning early
+- R functions only return a single object, but of course it can be a list with many objects
+- usually R functions have little *side effects* because of copy-on-modify semantics
+- However **environments and reference classes** (?) can be modified in place (Attention!)
+- To reduce side effects is one of the motivating principles of ggplot2: most operations work on an
+object that represents a plot, and only the final print or plot call has the side effect of actually drawing the plot.
+
+- Functions can return invisible values, invisible can be made visible by putting the function call in parentheses
+
+```{r}
+f1 <- function() 1
+f2 <- function() invisible(1)
+f1()
+#> [1] 1
+f2()
+f1() == 1
+#> [1] TRUE
+f2() == 1
+#> [1] TRUE
+(f2())
+
+# The most common function that returns invisibly is <-:
+a <- 2
+(a <- 2)
+
+# this is why you can assign the same value to multible variables
+a <- b <- c <- d <- 2
+# because it is parsed as:
+(a <- (b <- (c <- (d <- 2))))
+```
+
+# On exit
+
+- As well as returning a value, functions can set up other triggers to occur when the function is finished using
+on.exit().
+- This is often used as a way to guarantee that changes to the global state are restored when the function
+exits. 
+- The code in on.exit() is run regardless of how the function exits, whether with an explicit (early) return, an
+error, or simply reaching the end of the function body.
+
+```{r}
+in_dir <- function(dir, code) {
+old <- setwd(dir) # nb actually saves the current directory
+on.exit(setwd(old))
+force(code)
+}
+getwd()
+#> [1] "/home/travis/build/hadley/adv-r"
+in_dir("~", getwd())
+#> [1] "/home/travis"
+
+
+```
+
+- If you???re using multiple on.exit() calls within a function, make sure to set add = TRUE. Unfortunately, the
+default in on.exit() is add = FALSE
+
+
+### Exercises
+
+```{r}
+# 1. How does the chdir parameter of source() compare to in_dir()? Why might you prefer one approach to the other?
+
+# see source code, by default chdir = FALSE
+# must look at it more closely, but only changes if chdir = TRUE, and tests if the directory is actually a directory
+
+# 2. What function undoes the action of library()? How do you save and restore the values of options() and par()?
+
+# detach() undoes the action of library() and removes a package from the search path
+
+# Save/Change options with `options(thing = val)`.  Get values of options with `getOption(thing)` or with options()$thing.
+
+# let's trey
+options()
+options("useFancyQuotes")
+options("useFancyQuotes" = FALSE)
+options("useFancyQuotes")
+getOption("useFancyQuotes")
+options("useFancyQuotes" = TRUE)
+# Guess it is the same with par()
+
+# 3 Write a function that opens a graphics device, runs the supplied code, and closes the graphics device
+#(always, regardless of whether or not the plotting code worked).
+
+# not done, see https://github.com/peterhurford/adv-r-book-solutions/blob/master/04_functions/05_returns/exercise3.r
+
+# 4. We can use on.exit() to implement a simple ersion of capture.output()
+
+capture.output2 <- function(code) {
+        temp <- tempfile()
+        on.exit(file.remove(temp), add = TRUE)
+        sink(temp)
+        on.exit(sink(), add = TRUE)
+        force(code)
+        readLines(temp)
+}
+
+capture.output2(cat("a", "b", "c", sep = "\n"))
 ```

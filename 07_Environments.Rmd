@@ -1,0 +1,259 @@
+---
+title: "07_Environments"
+author: "Thorsten Brach"
+date: "2/3/2017"
+output: html_document
+---
+
+- for exercises check: <https://github.com/peterhurford/adv-r-book-solutions>
+
+# Environment basics
+
+- environment is the **data structure** that powers scoping
+- environments have **reference semantics**. So you modify a binding, and the environment is not copied but changed in place. 
+- each binding points a name to an object in memory
+- objects that no names are pointing to, get deleted by "garbage collector"
+- all environments have parents used for scoping up to the empty environment
+- differences to a list:
+    - all names are unique
+    - names in an environment are not ordered
+    - environments have parents
+    - environments have reference semantics
+- technically you call the name bindings the frame of an environment, the second component is the parent
+- special environments:
+    - environment() # current environment
+    - globalenv() # working environment, followed by all attached packages
+    - baseenv() # of the base package, always second last
+    - emtpyenv() # the ultimate ancestor of all environments
+- search() # lists all parents of the globalenv
+- Autoloads in search() is a special environment that saves memory by only loading objects of packages when needed.
+    
+    
+```{r}
+e <- new.env()
+e$a <- FALSE
+# show bindings of an environmnet
+ls("package:tidyr", all.names = TRUE)
+# show parent environment
+parent.env(as.environment("package:tidyr"))
+parent.env(e)
+ls.str(as.environment("package:tidyr"))
+# to remove a binding you need to use rm
+rm("a", envir = e)
+exists("x", envir = e, inherits = FALSE)
+```
+
+### Exercises
+
+```{r}
+# 1.) see above
+# 2.) they look in globalenv()
+# 3.) Using parent.env() and a loop (or a recursive function), verify that the ancestors of globalenv() include baseenv() and emptyenv(). Use the same basic idea to implement your own version of search().
+# here the solution from the above mentioned github page 
+e <- globalenv()
+EnvList <- c(e)
+v <- c(environmentName(e))
+while (!identical(e, emptyenv())) {
+  e <- parent.env(e)
+  EnvList <- c(EnvList,e)
+  v <- c(v,environmentName(e))
+}
+
+# try to solve with a recursive function
+# I think the one cheat thing with the above solution was that emptyenv() was used to stop the loop
+# here the "only" thing to know is that parent.env will throw an error for the last environment in the
+# list, i.e. an evironment without a parent
+
+searchOwn <- function(StartEnvironment){
+        
+        if(class(try(parent.env(StartEnvironment), silent = TRUE)) == "try-error"){
+                return(environmentName(StartEnvironment))
+        }
+        
+        par <- parent.env(StartEnvironment)
+        namepar <- searchOwn(par)
+        c(environmentName(StartEnvironment), namepar)
+}
+
+
+```
+
+# Recursing over environments
+
+- let's call the function f, f returns a direct output if it fulfills a certain crtierion, otherwise it calls itself with a new input. So the function keeps on calling itself with modified inputs, let's number the calls, f calls f1 calls f2 calls f3 (f1 to f3 = f), then f3 returns directly, f2 can build a return based on f3s output, then f1 on f2s output, and finally f.
+    - so imagine it as f > f1 > f2 > f3 >> return f3 > return f2 > return f1 > return f
+- in general the functions start with a base case, then success case, and continue with the recursive case, see where() below
+
+```{r}
+quickSort <- function(vect){
+        
+        if(length(vect) <= 1){return(vect)}
+        element <- vect[1]
+        partition <- vect[-1]
+        v1 <- partition[partition < element]
+        v2 <- partition[partition >= element]
+        v1 <- quickSort(v1)
+        v2 <- quickSort(v2)
+        c(v1, element, v2)
+}
+
+```
+
+- pryr::where() tells you in which environment a name is defined
+- environments form a tree, it is therefore natural to work with them recursively, so where() is super example
+
+```{r}
+where <- function(name, env = parent.frame()) {
+if (identical(env, emptyenv())) {
+# Base case
+stop("Can't find ", name, call. = FALSE)
+} else if (exists(name, envir = env, inherits = FALSE)) {
+# Success case
+env
+} else {
+# Recursive case
+where(name, parent.env(env))
+}
+}
+There
+
+```
+
+## Iteration vs recursion
+
+- iteration can be faster because less function calls
+
+```{r}
+is_empty <- function(x) identical(x, emptyenv())
+f2 <- function(..., env = parent.frame()) {
+while(!is_empty(env)) {
+if (success) {
+# success case
+return()
+}
+# inspect parent
+env <- parent.env(env)
+}
+# base case
+}
+```
+
+### Exercises
+
+- not done yet, but they sound very exciting to learn recursive functions
+
+
+# Function Environmnets
+
+- most environments are not created by you using new.env() but are created as a consequence of using functions
+- Four types of environments are associated with a function
+    - enclosing env (only 1) (env where function was created)
+    - binding env (0, 1, or many) (created by binding function to a name f <- function())
+    - execution env (0, 1, or many) (created when a function is called, is ephemeral i.e. lasts short time)
+    - calling env (0, 1, or many) (is associated with execution env and tells you where the function was called)
+    
+- you should know why each is important, how to access and how to use them
+
+## THe enclosing environment
+
+- a newly created function gains reference to the env where it was made, this is the enclosing environment
+- calling environment(function_name)
+- the enclosing env belongs to a function and is never changed even if the function is moved to a different env
+
+```{r}
+f <- function(x) { x + 1}
+environment(f)
+environment(mean) # NB: namespace!!
+
+```
+
+# Binding environments
+
+- so environments because could be several 
+- The key to understand a binding env is that **functions do not have names!**, the name is defined by a binding. So binding environments of a function are all env that have bindings to it.
+- **the enclosing env determines how a function finds values, the binding environments define how we find the function**
+
+```{r}
+e <- new.env()
+e$g <- function() 1
+environment(e$g) # it was still created in global env
+# but e is now a binding environmnet of the function
+```
+
+- The **concept of package namespaces** is build on the difference between enclosing and binding environments. e.g. package A uses the mean function, package B creates its own mean function, package A is unaffected
+
+```{r}
+environment(sd) # the enclosing env of sd is namespace:stats
+pryr::where("sd") # the binding environment is package:stats
+```
+
+- so he would say sd lives in package:stats, but it looks up values in namespace:stats
+- so every package has two env associated with it: the package env and the namespace env. The package env contains all publicly available functions (the bindings) and is on the search pace. The namespace env contains all functions (including internal functions) and its parent environment is a special imports envioronment that contains bindings to all the functions that the package needs. 
+   - in other words: every exported function in a package is bound in the package environment on the search path, but enclosed by the namespace environment with a special imports parent environment. 
+- See the diagram on page 11, when we define a new var function in global env it is first on our searchpath, but sd looks first in namespace::stats and would only after imports:stats namespace:base look into globalenv()
+
+# Execution environments
+
+- each time a function is called an ephemeral execution environmnet is created, it's parent is the enclosing environment of the function.
+- remember the fresh start principle of functions, it is based on the fact that execution environments are ephemeral and a new one is created on each fresh function call. 
+- However, **when you create a function within another function the enclosing environment of the child is the execution env of the parent, and this execution env is no longer ephemeral.**
+
+```{r}
+plus <- function(x) {
+function(y) x + y
+}
+plus_one <- plus(x = 1)
+identical(parent.env(environment(plus_one)), environment(plus))
+pryr::where("plus")
+environment(plus)
+# function plus was both created and bound to the global env
+# it was executed with x = 1 to create plus_one, so the enclosing env is the execution env of that call. That is why this environment remained (not ephemeral) as the enclosing environment of plus_one
+environment(plus_one)
+ls(environment(plus_one)) # you can see there is a binding for x in this env
+# then remember: the parent of an execution env is the enclosing environment of the function,
+# so the parent of the enclosing environment of plus_one should be the enclosing envirionment of plus, so here the global env.
+# and that is shown with identical
+```
+
+# Calling environments
+
+- guess from what you now what the call to i will result in
+
+```{r}
+h <- function() {
+x <- 10
+function() {
+x
+}
+}
+x <- 20
+i <- h()
+i()
+
+# environment(i)
+# parent.env(environment(i))
+# ls(environment(i))
+```
+
+- I hope you said 10 even though I shifted the x <- 20 up, because I thought it made it harder. i is created during a call to h, so i's enclosing environment is the excecution environment of the h() call, and there x is 10. 
+- the calling environment is the environment where a function was called, in this environment x would have been 20,
+- **you can access the calling environment with the unfortunately named parent.frame()**
+
+```{r}
+f2 <- function() {
+x <- 10
+function() {
+def <- get("x", environment())
+cll <- get("x", parent.frame())
+list(defined = def, called = cll)
+}
+}
+g2 <- f2()
+x <- 20
+str(g2())
+
+
+
+```
+
+

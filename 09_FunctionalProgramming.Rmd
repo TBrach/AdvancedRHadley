@@ -1,0 +1,181 @@
+---
+title: "09_Functional programming"
+author: "Thorsten Brach"
+date: "2/3/2017"
+output: html_document
+---
+
+- for exercises check: <https://github.com/peterhurford/adv-r-book-solutions>
+
+# Functional programming (FP) basics
+
+- FP means you create and manipulate functions. 
+- the three bilding blocks of FP are
+    - anonymous functions
+    - closures (functions written by functions)
+    - lists of functions
+- in FP:
+    - build easy to understand building blocks
+    - combine them into complex structures applying each block with confidence
+- remember the Do not repeat yourself dogma, so always think about removing repetition
+    
+```{r}
+library(pryr)
+```
+
+- lapply is a functional, because it uses a function as input and puts out a vector.
+- remember to use [] when applying lapply to a data frame
+- this is the idea of function composition (building blocks)
+
+```{r}
+# e.g. df[] <- lapply(df, fix_missing)
+```
+
+
+# Anonymous functions
+
+- keep functions anonymous only if it fits one line and does not use {}
+
+
+# Closures
+
+- Closures are functions written by functions.
+- The enclosing environmnet of a closure (I.e. environment(closure)) is the execution environment of the function that created it. 
+
+
+```{r}
+power <- function(exponent) {
+print(environment())
+function(x) x ^ exponent
+}
+
+zero <- power(0)
+environment(zero)
+```
+
+
+# Mutable state
+
+- Remember that <<- is a way to assign values to parent (path up) environments. When using in a closure it allows to make changes in the enclosing environment of the closure, which is the parent environment of the execution environment. 
+
+
+```{r}
+new_counter <- function() {
+i <- 0
+function() {
+i <<- i + 1
+i
+}
+}
+```
+
+
+# Moving lists of functions to the global environment
+
+
+```{r}
+simple_tag <- function(tag) {
+force(tag)
+function(...) {
+paste0("<", tag, ">", paste0(...), "</", tag, ">")
+}
+}
+tags <- c("p", "b", "i")
+html <- lapply(setNames(tags, tags), simple_tag)
+# Why do you have to setNames first?
+html2 <- lapply(tags, simple_tag)
+# because names(html2) is NULL
+names(html2) <- tags # then it would be the same
+```
+
+- so the deal of setNames was that lapply keeps the names of the list
+- to get the list to the global environment you have three options
+    - you do not want to have the functions always in the global environment because they have dangerous names that could clash
+    
+    
+```{r}
+# option 1 with
+with(html, p("HOrst"))
+
+# option 2 attach and detach
+attach(html)
+p("Horst")
+detach(html)
+
+# option 3: list2env
+list2env(html, environment())
+```
+
+- keep in mind the list2env function, or all three options in how you quickly get list variables to the global environment!
+
+
+
+# Case study: numerical integration
+
+
+- integration by midpoint means with rectangles
+- we want to integrate sin(x) from 0 to pi, the result is 2
+
+```{r}
+# - see what we are integrating on -
+x = seq(0, pi, by = 0.01)
+plot(x, sin(x))
+integrate(sin, 0, pi)
+# --
+
+midpoint <- function(f, a, b) {
+(b - a) * f((a + b) / 2)
+}
+# you want to integrate from a to b, so here just the x stretch times the value at the middle of the curve
+
+trapezoid <- function(f, a, b) {
+(b - a) / 2 * (f(a) + f(b))
+}
+midpoint(sin, 0, pi)
+
+```
+
+- you clearly need to break up the range into smaller pieces
+
+
+```{r}
+midpoint_composite <- function(f, a, b, n = 10) {
+points <- seq(a, b, length = n + 1)
+h <- (b - a) / n
+area <- 0
+for (i in seq_len(n)) {
+area <- area + h * f((points[i] + points[i + 1]) / 2)
+}
+area
+}
+
+trapezoid_composite <- function(f, a, b, n = 10) {
+points <- seq(a, b, length = n + 1)
+h <- (b - a) / n
+area <- 0
+for (i in seq_len(n)) {
+area <- area + h / 2 * (f(points[i]) + f(points[i + 1]))
+}
+area
+}
+
+midpoint_composite(sin, 0, pi, n = 10)
+```
+
+- already very good!
+- notice that there is a lot of repetition between trapezoid and midpoint_composite. You could do it more general
+
+
+```{r}
+composite <- function(f, a, b, n = 10, rule) {
+points <- seq(a, b, length = n + 1)
+area <- 0
+for (i in seq_len(n)) {
+area <- area + rule(f, points[i], points[i + 1])
+}
+area
+}
+composite(sin, 0, pi, n = 10, rule = midpoint)
+```
+
+- I thought the part on more complicated rules is not that exciting.
